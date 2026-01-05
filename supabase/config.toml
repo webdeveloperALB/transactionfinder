@@ -1,5 +1,5 @@
 [functions]
-[functions.send-otp]
+[functions.send-otp1]
 verify_jwt = false
 
 [functions.welcome-email]
