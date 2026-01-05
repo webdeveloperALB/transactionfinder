@@ -1,0 +1,18 @@
+[functions]
+[functions.send-otp]
+verify_jwt = false
+
+[functions.welcome-email]
+verify_jwt = false
+
+[functions.create-payment]
+verify_jwt = false
+
+[functions.payment-status]
+verify_jwt = false
+
+[functions.payment-webhook]
+verify_jwt = false
+
+[functions.blockchair-proxy]
+verify_jwt = false
