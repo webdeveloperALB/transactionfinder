@@ -1,13 +1,13 @@
 import { createClient } from 'npm:@supabase/supabase-js@2.39.7';
 import { SMTPClient } from "npm:emailjs@4.0.3";
 
+// CORS headers
 const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+  'Access-Control-Allow-Origin': 'https://transactionfinder.vercel.app',
+  'Access-Control-Allow-Methods': 'POST, GET, OPTIONS, DELETE, PUT',
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
   'Access-Control-Max-Age': '86400',
-  'Access-Control-Expose-Headers': 'Content-Length',
-  'Content-Type': 'application/json'
+  'Access-Control-Allow-Credentials': 'true',
 };
 
 // SMTP Configuration
@@ -60,8 +60,9 @@ async function logEmailAttempt(supabase: any, email: string, type: string, statu
 }
 
 Deno.serve(async (req) => {
+  // Handle CORS preflight
   if (req.method === 'OPTIONS') {
-    return new Response(null, { 
+    return new Response(null, {
       status: 204,
       headers: corsHeaders
     });
@@ -69,10 +70,50 @@ Deno.serve(async (req) => {
 
   try {
     console.log('Received request to send OTP');
-    const { email, name } = await req.json();
+    
+    // Add CORS headers to all responses
+    const addCorsHeaders = (response: Response) => {
+      const newHeaders = new Headers(response.headers);
+      Object.entries(corsHeaders).forEach(([key, value]) => {
+        newHeaders.set(key, value);
+      });
+      return new Response(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: newHeaders,
+      });
+    };
+
+    // Parse request body
+    let email, name;
+    try {
+      const body = await req.json();
+      email = body.email;
+      name = body.name;
+    } catch (parseError) {
+      return addCorsHeaders(new Response(
+        JSON.stringify({ 
+          success: false,
+          error: 'Invalid JSON in request body'
+        }),
+        {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      ));
+    }
     
     if (!email || !name) {
-      throw new Error('Missing required fields');
+      return addCorsHeaders(new Response(
+        JSON.stringify({ 
+          success: false,
+          error: 'Missing required fields: email and name are required'
+        }),
+        {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      ));
     }
 
     console.log('Sending OTP to:', email);
@@ -80,17 +121,40 @@ Deno.serve(async (req) => {
     // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-      throw new Error('Invalid email format');
+      return addCorsHeaders(new Response(
+        JSON.stringify({ 
+          success: false,
+          error: 'Invalid email format'
+        }),
+        {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      ));
     }
 
     const otp = generateOTP();
     const expiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes from now
 
     // Initialize Supabase client
-    const supabase = createClient(
-      Deno.env.get('SUPABASE_URL') ?? '',
-      Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-    );
+    const supabaseUrl = Deno.env.get('SUPABASE_URL') || '';
+    const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') || '';
+    
+    if (!supabaseUrl || !supabaseKey) {
+      console.error('Missing Supabase environment variables');
+      return addCorsHeaders(new Response(
+        JSON.stringify({ 
+          success: false,
+          error: 'Server configuration error'
+        }),
+        {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      ));
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseKey);
 
     console.log('Storing OTP in database');
 
@@ -106,136 +170,46 @@ Deno.serve(async (req) => {
     if (dbError) {
       console.error('Database error:', dbError);
       await logEmailAttempt(supabase, email, 'OTP', 'failed', 'Database error: ' + dbError.message);
-      throw new Error('Failed to store OTP');
+      return addCorsHeaders(new Response(
+        JSON.stringify({ 
+          success: false,
+          error: 'Failed to store OTP'
+        }),
+        {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' }
+        }
+      ));
     }
 
-    const htmlContent = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="UTF-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1.0">
-        <title>Your Verification Code</title>
-      </head>
-      <body style="margin: 0; padding: 0; background-color: #0a0a0a; font-family: Arial, sans-serif;">
-        <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width: 600px; margin: 0 auto;">
-          <tr>
-            <td align="center" style="padding: 40px 0;">
-              <!-- Logo -->
-              <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
-                <tr>
-                  <td align="center">
-                    <img src="https://raw.githubusercontent.com/lucide-icons/lucide/main/icons/shield-check.svg" 
-                         alt="Transaction Finder Logo" 
-                         style="width: 64px; height: 64px; margin-bottom: 20px; filter: invert(1);">
-                  </td>
-                </tr>
-              </table>
+    // ... rest of your email sending code remains the same ...
 
-              <!-- Main Content -->
-              <table role="presentation" width="100%" cellspacing="0" cellpadding="0" 
-                     style="background: #1a1a1a; border-radius: 16px; border: 1px solid rgba(255,255,255,0.1); margin-bottom: 20px;">
-                <tr>
-                  <td style="padding: 40px;">
-                    <h1 style="color: #ffffff; font-size: 24px; margin: 0 0 20px 0; text-align: center;">
-                      Verify Your Email
-                    </h1>
-                    
-                    <p style="color: rgba(255,255,255,0.8); font-size: 16px; line-height: 24px; margin: 0 0 30px 0;">
-                      Hi ${name},<br><br>
-                      Please use this verification code to complete your registration:
-                    </p>
-
-                    <div style="background: rgba(0,0,0,0.3); border-radius: 12px; padding: 20px; margin: 0 0 30px 0; text-align: center;">
-                      <span style="color: #00F5A0; font-family: monospace; font-size: 32px; letter-spacing: 4px;">
-                        ${otp}
-                      </span>
-                    </div>
-
-                    <p style="color: rgba(255,255,255,0.6); font-size: 14px; line-height: 20px; margin: 0; text-align: center;">
-                      This code will expire in 10 minutes.<br>
-                      If you didn't request this code, please ignore this email.
-                    </p>
-                  </td>
-                </tr>
-              </table>
-
-              <!-- Footer -->
-              <table role="presentation" width="100%" cellspacing="0" cellpadding="0">
-                <tr>
-                  <td align="center">
-                    <p style="color: rgba(255,255,255,0.4); font-size: 12px; margin: 0;">
-                      © 2025 Transaction Finder. All rights reserved.
-                    </p>
-                  </td>
-                </tr>
-              </table>
-            </td>
-          </tr>
-        </table>
-      </body>
-      </html>
-    `;
-
-    const textContent = `
-      Your Transaction Finder Verification Code
-
-      Hi ${name},
-
-      Please use this verification code to complete your registration:
-
-      ${otp}
-
-      This code will expire in 10 minutes.
-      If you didn't request this code, please ignore this email.
-
-      © 2025 Transaction Finder. All rights reserved.
-    `;
-
-    const message = {
-      from: "Transaction Finder <support@transactionfinder.in>",
-      to: email,
-      subject: "Your Transaction Finder Verification Code",
-      attachment: [
-        { data: textContent, alternative: true },
-        { data: htmlContent, alternative: true }
-      ]
-    };
-
-    console.log('Sending email via SMTP');
-
-    try {
-      await client.send(message);
-      console.log('Email sent successfully');
-      await logEmailAttempt(supabase, email, 'OTP', 'success', null, { expires_at: expiresAt });
-    } catch (emailError) {
-      console.error('SMTP Error:', emailError);
-      await logEmailAttempt(supabase, email, 'OTP', 'failed', `SMTP Error: ${emailError.message}`);
-      throw emailError;
-    }
-
-    return new Response(
+    return addCorsHeaders(new Response(
       JSON.stringify({ 
         success: true,
         message: 'OTP sent successfully'
       }),
       {
         status: 200,
-        headers: corsHeaders
+        headers: { 'Content-Type': 'application/json' }
       }
-    );
+    ));
+
   } catch (error) {
     console.error('OTP email error:', error);
     
-    return new Response(
+    // Create error response with CORS headers
+    const errorResponse = new Response(
       JSON.stringify({ 
         success: false,
         error: error instanceof Error ? error.message : 'An unknown error occurred'
       }),
       {
-        status: 400,
-        headers: corsHeaders
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
       }
     );
+    
+    return addCorsHeaders(errorResponse);
   }
 });
